@@ -6,6 +6,8 @@
 --   When enabled, existing children of the selected folders take the folder
 --   parent track color. After that, tracks also update when moved into one of
 --   the selected folders or moved from one selected folder to another.
+--   New tracks created inside an enabled folder automatically inherit that
+--   folder's color.
 --   If the folder parent has no custom color, the child track color is cleared.
 
 local SCRIPT_NAME = "Auto color tracks from selected folder parents"
@@ -18,9 +20,6 @@ end
 
 local EXT_SECTION = "AutoColorFolderChildren"
 local TOKEN_KEY = "active_token"
-
--- Set true if you also want existing children to update when the folder color changes.
-local FOLLOW_FOLDER_COLOR_CHANGES = false
 
 local previous_parents = {}
 local previous_parent_colors = {}
@@ -60,6 +59,11 @@ local function color_from_parent(track, parent)
   end
 
   return false
+end
+
+local function refresh_track_colors()
+  reaper.TrackList_AdjustWindows(false)
+  reaper.UpdateArrange()
 end
 
 local function is_folder_track(track)
@@ -104,13 +108,18 @@ local function build_snapshot_and_color_changes(apply_changes)
       local parent_color = reaper.GetTrackColor(parent)
       next_parent_colors[current_parent_guid] = parent_color
 
-      local parent_changed = previous_parents[guid] ~= nil and previous_parents[guid] ~= current_parent_guid
-      local is_new_track_inside_folder = previous_parents[guid] == nil
-      local parent_color_changed = FOLLOW_FOLDER_COLOR_CHANGES
-        and previous_parent_colors[current_parent_guid] ~= nil
+      local was_seen_before = previous_parents[guid] ~= nil
+      local parent_changed = was_seen_before and previous_parents[guid] ~= current_parent_guid
+      local is_new_track_inside_selected_folder = not was_seen_before
+      local parent_color_changed = previous_parent_colors[current_parent_guid] ~= nil
         and previous_parent_colors[current_parent_guid] ~= parent_color
+      local color_mismatch = reaper.GetTrackColor(track) ~= parent_color
+      local should_color_track = parent_changed
+        or is_new_track_inside_selected_folder
+        or parent_color_changed
+        or color_mismatch
 
-      if apply_changes and (parent_changed or is_new_track_inside_folder or parent_color_changed) then
+      if apply_changes and should_color_track then
         changed = color_from_parent(track, parent) or changed
       end
     end
@@ -138,7 +147,7 @@ local function loop()
   local changed = build_snapshot_and_color_changes(true)
 
   if changed then
-    reaper.UpdateArrange()
+    refresh_track_colors()
   end
 
   reaper.defer(loop)
@@ -164,7 +173,7 @@ token = tostring(reaper.time_precise()) .. ":" .. tostring(math.random())
 reaper.SetExtState(EXT_SECTION, TOKEN_KEY, token, false)
 
 if build_snapshot_and_color_changes(true) then
-  reaper.UpdateArrange()
+  refresh_track_colors()
 end
 
 reaper.defer(loop)
